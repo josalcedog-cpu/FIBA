@@ -1,0 +1,148 @@
+#include <Arduino.h>
+#include <SensirionI2cSps30.h>
+#include <Wire.h>
+
+// Definición explícita de los pines I2C (SDA y SCL) para ESP32.
+// Estos son los pines predeterminados en la mayoría de las placas DevKit.
+// **ADVERTENCIA: Si usas pines diferentes, cámbialos aquí.**
+#define SDA_PIN 21
+#define SCL_PIN 22
+
+// macro definitions
+// make sure that we use the proper definition of NO_ERROR
+#ifdef NO_ERROR
+#undef NO_ERROR
+#endif
+#define NO_ERROR 0
+
+// Instancia del sensor
+SensirionI2cSps30 sensor;
+
+static char errorMessage[64];
+static int16_t error;
+
+void setup() {
+
+    Serial.begin(115200);
+    // Espera a que el puerto serial esté listo (útil para placas con USB nativo como el ESP32-S2/S3)
+    while (!Serial) {
+        delay(100);
+    }
+    
+    // Inicializa el bus I2C con los pines definidos para el ESP32
+    // La conexión del sensor SPS30 debe ser:
+    // SPS30 SDA -> GPIO 21
+    // SPS30 SCL -> GPIO 22
+    Wire.begin(SDA_PIN, SCL_PIN);
+    
+    // Configura el sensor SPS30 en la dirección I2C 0x69
+    sensor.begin(Wire, SPS30_I2C_ADDR_69);
+
+    // Detiene la medición para asegurar que el sensor está en un estado conocido
+    sensor.stopMeasurement();
+    
+    // Lectura de información del sensor
+    int8_t serialNumber[32] = {0};
+    int8_t productType[8] = {0};
+    
+    sensor.readSerialNumber(serialNumber, 32);
+    Serial.print("Serial Number: ");
+    Serial.print((const char*)serialNumber);
+    Serial.println();
+    
+    sensor.readProductType(productType, 8);
+    Serial.print("Product Type: ");
+    Serial.print((const char*)productType);
+    Serial.println();
+    
+    // Inicia la medición con formato UINT16 (valores enteros)
+    // El formato Uint16 proporciona los valores de concentración de masa y número
+    // como valores enteros, que deben ser divididos por 10 para obtener µg/m³ o #/cm³.
+    error = sensor.startMeasurement(SPS30_OUTPUT_FORMAT_OUTPUT_FORMAT_UINT16);
+    if (error != NO_ERROR) {
+        Serial.print("Error al iniciar la medicion: ");
+        errorToString(error, errorMessage, sizeof errorMessage);
+        Serial.println(errorMessage);
+    }
+    
+    Serial.println("Medicion SPS30 iniciada. Esperando 30 segundos para la primera lectura estable.");
+    delay(100); // Pequeña espera tras iniciar
+}
+
+void loop() {
+    // El SPS30 tiene un ciclo de medición de 1 segundo, 
+    // pero la primera lectura estable tarda alrededor de 30 segundos.
+    delay(1000); 
+
+    uint16_t dataReadyFlag = 0;
+    
+    // Variables para almacenar los valores del sensor
+    uint16_t mc1p0 = 0;     // Concentración de Masa (Mass Concentration) PM1.0
+    uint16_t mc2p5 = 0;     // Concentración de Masa PM2.5
+    uint16_t mc4p0 = 0;     // Concentración de Masa PM4.0
+    uint16_t mc10p0 = 0;    // Concentración de Masa PM10.0
+    uint16_t nc0p5 = 0;     // Concentración de Número (Number Concentration) PM0.5
+    uint16_t nc1p0 = 0;     // Concentración de Número PM1.0
+    uint16_t nc2p5 = 0;     // Concentración de Número PM2.5
+    uint16_t nc4p0 = 0;     // Concentración de Número PM4.0
+    uint16_t nc10p0 = 0;    // Concentración de Número PM10.0
+    uint16_t typicalParticleSize = 0;
+    
+    // 1. Verifica si hay nuevos datos listos para leer
+    error = sensor.readDataReadyFlag(dataReadyFlag);
+    if (error != NO_ERROR) {
+        Serial.print("Error al leer dataReadyFlag: ");
+        errorToString(error, errorMessage, sizeof errorMessage);
+        Serial.println(errorMessage);
+        return;
+    }
+    
+    // Si dataReadyFlag es 1, hay datos nuevos
+    if (dataReadyFlag == 1) {
+        // 2. Lee los valores de medición
+        error = sensor.readMeasurementValuesUint16(mc1p0, mc2p5, mc4p0, mc10p0,
+                                                 nc0p5, nc1p0, nc2p5, nc4p0,
+                                                 nc10p0, typicalParticleSize);
+        
+        if (error != NO_ERROR) {
+            Serial.print("Error al leer mediciones: ");
+            errorToString(error, errorMessage, sizeof errorMessage);
+            Serial.println(errorMessage);
+            return;
+        }
+
+        Serial.println("--- Nueva Lectura ---");
+        // Muestra la Concentración de Masa (Mass Concentration) en µg/m³
+        // Recuerda: Para el formato Uint16, debes dividir por 10
+        Serial.print("PM1.0 (µg/m³): ");
+        Serial.print(mc1p0 / 10.0, 1); // Divide por 10.0 y muestra un decimal
+        Serial.print("\tPM2.5 (µg/m³): ");
+        Serial.print(mc2p5 / 10.0, 1);
+        Serial.print("\tPM4.0 (µg/m³): ");
+        Serial.print(mc4p0 / 10.0, 1);
+        Serial.print("\tPM10.0 (µg/m³): ");
+        Serial.print(mc10p0 / 10.0, 1);
+        Serial.println();
+        
+        // Muestra la Concentración de Número (Number Concentration) en #/cm³
+        Serial.print("Num 0.5 (#/cm³): ");
+        Serial.print(nc0p5 / 10.0, 1);
+        Serial.print("\tNum 1.0 (#/cm³): ");
+        Serial.print(nc1p0 / 10.0, 1);
+        Serial.print("\tNum 2.5 (#/cm³): ");
+        Serial.print(nc2p5 / 10.0, 1);
+        Serial.print("\tNum 4.0 (#/cm³): ");
+        Serial.print(nc4p0 / 10.0, 1);
+        Serial.print("\tNum 10.0 (#/cm³): ");
+        Serial.print(nc10p0 / 10.0, 1);
+        Serial.println();
+        
+        Serial.print("Tamaño típico de Partícula (µm): ");
+        Serial.print(typicalParticleSize / 100.0, 2); // Típico se divide por 100
+        Serial.println();
+        Serial.println("---------------------");
+        
+    } else {
+        Serial.println("Esperando nuevos datos del sensor...");
+    }
+}
