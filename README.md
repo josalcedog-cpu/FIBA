@@ -30,7 +30,7 @@ Resumen breve del funcionamiento del sensor: <a href= "https://www.instructables
   ANODO -> GPIO4<br>
 <h3>Sobre los pones a la pantalla TfT: <h3>
 
-  TFT | ESP32
+  TFT | ESP32<br>
   CS -> GPIO5<br>
   DC -> GPIO2<br>
   RST -> GPIO15<br>
